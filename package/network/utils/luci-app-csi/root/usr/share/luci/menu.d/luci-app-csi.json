@@ -1,0 +1,10 @@
+{
+    "admin/network/csi": {
+        "title": "CSI Monitor",
+        "order": 90,
+        "action": {
+            "type": "view",
+            "path": "csi/status"
+        }
+    }
+}
