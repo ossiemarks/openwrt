@@ -29,6 +29,7 @@ define Build/Configure
 endef
 
 TARGET_CFLAGS += \
+	-DWITH_MQTT \
 	-I$(STAGING_DIR)/usr/include/libnl-tiny \
 	-I$(STAGING_DIR)/usr/include
 

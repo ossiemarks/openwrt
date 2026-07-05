@@ -1,7 +1,15 @@
 #include <stdio.h>
 #include <string.h>
-#include <mosquitto.h>
 #include "mqtt.h"
+
+/*
+ * MQTT support is compiled in only when WITH_MQTT is defined (the OpenWrt
+ * package Makefile sets it and depends on libmosquitto). When built without
+ * it, these become no-ops so the daemon still runs with UDP/ubus/REST — MQTT
+ * is disabled by default in the config anyway.
+ */
+#ifdef WITH_MQTT
+#include <mosquitto.h>
 
 static struct mosquitto *mosq;
 static char topic_raw[64];
@@ -62,3 +70,28 @@ void mqtt_stop(void)
         mosquitto_lib_cleanup();
     }
 }
+
+#else /* !WITH_MQTT */
+
+int mqtt_start(const csi_config_t *cfg)
+{
+    (void)cfg;
+    return 0;
+}
+
+void mqtt_publish_raw(const csi_frame_t *f)
+{
+    (void)f;
+}
+
+void mqtt_publish_event(const char *subtopic, const char *json)
+{
+    (void)subtopic;
+    (void)json;
+}
+
+void mqtt_stop(void)
+{
+}
+
+#endif /* WITH_MQTT */
