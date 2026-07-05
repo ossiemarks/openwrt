@@ -524,8 +524,24 @@ diff --color -Nur src-orig/mt7915/mcu.h src/mt7915/mcu.h
  #endif
 diff --color -Nur src-orig/mt7915/mt7915.h src/mt7915/mt7915.h
 --- a/mt7915/mt7915.h	2026-07-03 19:00:21
-+++ b/mt7915/mt7915.h	2026-07-03 19:26:51
-@@ -207,6 +207,58 @@
++++ b/mt7915/mt7915.h	2026-07-04 21:20:53
+@@ -4,6 +4,15 @@
+ #ifndef __MT7915_H
+ #define __MT7915_H
+ 
++/* Enable the MediaTek CSI vendor interface unconditionally. Defined here
++ * rather than via EXTRA_CFLAGS because OpenWrt's mt76 package passes
++ * EXTRA_CFLAGS on the make command line, overriding the subdir Makefile's
++ * += and stripping the flag at compile time.
++ */
++#ifndef CONFIG_MTK_VENDOR
++#define CONFIG_MTK_VENDOR 1
++#endif
++
+ #include <linux/interrupt.h>
+ #include <linux/ktime.h>
+ #include "../mt76_connac.h"
+@@ -207,6 +216,58 @@
  	u32 index;
  };
  
@@ -584,7 +600,7 @@ diff --color -Nur src-orig/mt7915/mt7915.h src/mt7915/mt7915.h
  struct mt7915_phy {
  	struct mt76_phy *mt76;
  	struct mt7915_dev *dev;
-@@ -252,6 +304,25 @@
+@@ -252,6 +313,25 @@
  		u8 spe_idx;
  	} test;
  #endif
@@ -610,7 +626,7 @@ diff --color -Nur src-orig/mt7915/mt7915.h src/mt7915/mt7915.h
  };
  
  struct mt7915_dev {
-@@ -649,5 +720,13 @@
+@@ -649,5 +729,13 @@
  #endif
  int mt7915_mmio_wed_init(struct mt7915_dev *dev, void *pdev_ptr,
  			 bool pci, int *irq);
