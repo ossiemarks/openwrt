@@ -1,0 +1,10 @@
+{
+    "luci-app-csi": {
+        "description": "Grant access to CSI monitor",
+        "read": {
+            "ubus": {
+                "csi": [ "status", "presence", "vitals" ]
+            }
+        }
+    }
+}
