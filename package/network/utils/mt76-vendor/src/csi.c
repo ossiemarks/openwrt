@@ -2,10 +2,13 @@
 /* Copyright (C) 2021 Mediatek Inc. */
 #define _GNU_SOURCE
 
+#include <stdarg.h>
+
 #include "mt76-vendor.h"
 
 struct csi_data *csi;
 int csi_idx;
+static int csi_max;
 
 static struct nla_policy csi_ctrl_policy[NUM_MTK_VENDOR_ATTRS_CSI_CTRL] = {
 	[MTK_VENDOR_ATTR_CSI_CTRL_CFG] = { .type = NLA_NESTED },
@@ -51,7 +54,12 @@ static int mt76_csi_dump_cb(struct nl_msg *msg, void *arg)
 	struct nlattr *cur;
 	size_t idx;
 	int rem;
-	struct csi_data *c = &csi[csi_idx];
+	struct csi_data *c;
+
+	/* never trust the kernel to stop at DUMP_NUM */
+	if (csi_idx >= csi_max)
+		return NL_SKIP;
+	c = &csi[csi_idx];
 
 	attr = unl_find_attr(&unl, msg, NL80211_ATTR_VENDOR_DATA);
 	if (!attr) {
@@ -99,6 +107,8 @@ static int mt76_csi_dump_cb(struct nl_msg *msg, void *arg)
 	c->ts = nla_get_u32(tb_data[MTK_VENDOR_ATTR_CSI_DATA_TS]);
 
 	c->data_num = nla_get_u32(tb_data[MTK_VENDOR_ATTR_CSI_DATA_NUM]);
+	if (c->data_num > CSI_BW160_DATA_COUNT)
+		c->data_num = CSI_BW160_DATA_COUNT;
 
 	idx = 0;
 	nla_for_each_nested(cur, tb_data[MTK_VENDOR_ATTR_CSI_DATA_TA], rem) {
@@ -123,9 +133,82 @@ static int mt76_csi_dump_cb(struct nl_msg *msg, void *arg)
 	return NL_SKIP;
 }
 
+/* append to *pos, never past end; returns -ENOSPC instead of truncating */
+static int csi_json_append(char **pos, const char *end, const char *fmt, ...)
+{
+	size_t space = end - *pos;
+	va_list ap;
+	int len;
+
+	va_start(ap, fmt);
+	len = vsnprintf(*pos, space, fmt, ap);
+	va_end(ap);
+
+	if (len < 0 || (size_t)len >= space)
+		return -ENOSPC;
+
+	*pos += len;
+
+	return 0;
+}
+
+static int mt76_csi_record_to_json(struct csi_data *c, char *buf, size_t size,
+				   bool last)
+{
+	char *pos = buf;
+	const char *end = buf + size;
+	int j;
+
+	if (csi_json_append(&pos, end, "%c", '[') ||
+	    csi_json_append(&pos, end, "%d,", c->ts) ||
+	    csi_json_append(&pos, end, "\"%02x%02x%02x%02x%02x%02x\",", c->ta[0], c->ta[1], c->ta[2], c->ta[3], c->ta[4], c->ta[5]) ||
+	    csi_json_append(&pos, end, "%d,", c->rssi) ||
+	    csi_json_append(&pos, end, "%u,", c->snr) ||
+	    csi_json_append(&pos, end, "%u,", c->data_bw) ||
+	    csi_json_append(&pos, end, "%u,", c->pri_ch_idx) ||
+	    csi_json_append(&pos, end, "%u,", c->rx_mode) ||
+	    csi_json_append(&pos, end, "%d,", c->tx_idx) ||
+	    csi_json_append(&pos, end, "%d,", c->rx_idx) ||
+	    csi_json_append(&pos, end, "%d,", c->chain_info) ||
+	    csi_json_append(&pos, end, "%d,", c->ext_info))
+		return -ENOSPC;
+
+	if (csi_json_append(&pos, end, "%c", '['))
+		return -ENOSPC;
+	for (j = 0; j < c->data_num; j++) {
+		if (csi_json_append(&pos, end, "%d", c->data_i[j]))
+			return -ENOSPC;
+		if (j != (c->data_num - 1) &&
+		    csi_json_append(&pos, end, ","))
+			return -ENOSPC;
+	}
+	if (csi_json_append(&pos, end, "%c,", ']'))
+		return -ENOSPC;
+
+	if (csi_json_append(&pos, end, "%c", '['))
+		return -ENOSPC;
+	for (j = 0; j < c->data_num; j++) {
+		if (csi_json_append(&pos, end, "%d", c->data_q[j]))
+			return -ENOSPC;
+		if (j != (c->data_num - 1) &&
+		    csi_json_append(&pos, end, ","))
+			return -ENOSPC;
+	}
+	if (csi_json_append(&pos, end, "%c", ']'))
+		return -ENOSPC;
+
+	if (csi_json_append(&pos, end, "%c", ']'))
+		return -ENOSPC;
+	if (!last && csi_json_append(&pos, end, ","))
+		return -ENOSPC;
+
+	return pos - buf;
+}
+
 static int mt76_csi_to_json(const char *name)
 {
-#define MAX_BUF_SIZE	6000
+/* worst case: 2 * CSI_BW160_DATA_COUNT entries of "-32768," plus the header */
+#define MAX_BUF_SIZE	16384
 	FILE *f;
 	int i, ret = -ENOMEM;
 
@@ -141,51 +224,24 @@ static int mt76_csi_to_json(const char *name)
 	}
 
 	for (i = 0; i < csi_idx; i++) {
-		struct csi_data *c = &csi[i];
-		char *pos, *buf;
-		int j;
+		char *buf;
+		int len;
 
 		buf = malloc(MAX_BUF_SIZE);
 		if (!buf)
 			goto out;
 
-		pos = buf;
-		pos += snprintf(pos, MAX_BUF_SIZE, "%c", '[');
-
-		pos += snprintf(pos, MAX_BUF_SIZE, "%d,", c->ts);
-		pos += snprintf(pos, MAX_BUF_SIZE, "\"%02x%02x%02x%02x%02x%02x\",", c->ta[0], c->ta[1], c->ta[2], c->ta[3], c->ta[4], c->ta[5]);
-
-		pos += snprintf(pos, MAX_BUF_SIZE, "%d,", c->rssi);
-		pos += snprintf(pos, MAX_BUF_SIZE, "%u,", c->snr);
-		pos += snprintf(pos, MAX_BUF_SIZE, "%u,", c->data_bw);
-		pos += snprintf(pos, MAX_BUF_SIZE, "%u,", c->pri_ch_idx);
-		pos += snprintf(pos, MAX_BUF_SIZE, "%u,", c->rx_mode);
-		pos += snprintf(pos, MAX_BUF_SIZE, "%d,", c->tx_idx);
-		pos += snprintf(pos, MAX_BUF_SIZE, "%d,", c->rx_idx);
-		pos += snprintf(pos, MAX_BUF_SIZE, "%d,", c->chain_info);
-		pos += snprintf(pos, MAX_BUF_SIZE, "%d,", c->ext_info);
-
-		pos += snprintf(pos, MAX_BUF_SIZE, "%c", '[');
-		for (j = 0; j < c->data_num; j++) {
-			pos += snprintf(pos, MAX_BUF_SIZE, "%d", c->data_i[j]);
-			if (j != (c->data_num - 1))
-				pos += snprintf(pos, MAX_BUF_SIZE, ",");
+		len = mt76_csi_record_to_json(&csi[i], buf, MAX_BUF_SIZE,
+					      i == csi_idx - 1);
+		if (len < 0) {
+			fprintf(stderr, "CSI record %d does not fit in %d bytes\n",
+				i, MAX_BUF_SIZE);
+			free(buf);
+			ret = len;
+			goto out;
 		}
-		pos += snprintf(pos, MAX_BUF_SIZE, "%c,", ']');
 
-		pos += snprintf(pos, MAX_BUF_SIZE, "%c", '[');
-		for (j = 0; j < c->data_num; j++) {
-			pos += snprintf(pos, MAX_BUF_SIZE, "%d", c->data_q[j]);
-			if (j != (c->data_num - 1))
-				pos += snprintf(pos, MAX_BUF_SIZE, ",");
-		}
-		pos += snprintf(pos, MAX_BUF_SIZE, "%c", ']');
-
-		pos += snprintf(pos, MAX_BUF_SIZE, "%c", ']');
-		if (i != csi_idx - 1)
-			pos += snprintf(pos, MAX_BUF_SIZE, ",");
-
-		if (fwrite(buf, 1, pos - buf, f) != (pos - buf)) {
+		if (fwrite(buf, 1, len, f) != (size_t)len) {
 			perror("fwrite");
 			free(buf);
 			goto out;
@@ -222,7 +278,10 @@ int mt76_csi_dump(int idx, int argc, char **argv)
 
 #define CSI_DUMP_PER_NUM	3
 	csi_idx = 0;
+	csi_max = pkt_num;
 	csi = (struct csi_data *)calloc(pkt_num, sizeof(*csi));
+	if (!csi)
+		return -ENOMEM;
 
 	for (i = 0; i < pkt_num / CSI_DUMP_PER_NUM; i++) {
 		if (unl_genl_init(&unl, "nl80211") < 0) {

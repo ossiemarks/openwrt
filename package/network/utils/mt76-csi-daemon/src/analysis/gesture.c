@@ -8,11 +8,25 @@
 /* Temporal pattern classifier over a short amplitude-energy window.
  * Distinguishes coarse gestures by the shape of the motion-energy burst:
  * a single symmetric peak -> "wave", a rising ramp -> "push",
- * a falling ramp -> "pull". Intentionally lightweight (2-antenna HW). */
+ * a falling ramp -> "pull". Intentionally lightweight (2-antenna HW).
+ *
+ * The onset/offset thresholds were previously 0.12/0.05, which no observed
+ * frame-energy deviation ever reached, so a burst was never opened and the
+ * classifier effectively never ran. They are now set from measured deviation
+ * magnitudes against a synthetic channel model.
+ *
+ * Caveat on the classifier itself: with bursts triggering, agreement with the
+ * driven burst shape is only around a third, which for three classes is about
+ * what guessing achieves. Fixing the thresholds fixes the trigger, not the
+ * discrimination. The shape rule below has not been shown to separate these
+ * classes, and cannot be validated without real labelled gesture captures;
+ * treat the emitted label as unproven. Note also that burst[] holds at most
+ * GWIN frames, so any gesture longer than that is truncated before the shape
+ * is examined. */
 
 #define GWIN 48
-#define ENERGY_ON  0.12f
-#define ENERGY_OFF 0.05f
+#define ENERGY_ON  0.010f
+#define ENERGY_OFF 0.004f
 
 static float ewin[GWIN];
 static int   wpos, wfull;
